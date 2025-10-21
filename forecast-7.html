@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>USD/KZT Forecast — AI / Prophet</title>
+
+<!-- Bootstrap 5 -->
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+<!-- jQuery -->
+<script src="https://code.jquery.com/jquery-3.7.0.min.js"></script>
+<!-- Plotly -->
+<script src="https://cdn.plot.ly/plotly-2.24.2.min.js"></script>
+
+<style>
+  :root{
+    --bg-light:#f8fafc;
+    --text-light:#111827;
+    --bg-dark:#0f1724;
+    --panel-dark:#111827;
+  }
+
+  body.transition-colors { transition: background-color .25s ease, color .25s ease; }
+
+  /* Light theme */
+  body.light-mode { background: var(--bg-light); color: var(--text-light); }
+  .card.light { background:#ffffff; color:var(--text-light); border-color:#e5e7eb; }
+  .table-light thead { background:#eef2f7; }
+
+  /* Dark theme */
+  body.dark-mode { background: var(--bg-dark); color: #e6eef6; }
+  .card.dark { background: var(--panel-dark); color: #e6eef6; border-color:#1f2937; }
+  .table-dark thead { background:#0b1220; color:#cfe6ff; }
+  .form-control.dark { background:#0b1220; color:#e6eef6; border-color:#243146; }
+
+  /* Trend colors for rows */
+  .trend-rise { color: #16a34a !important; font-weight:600; }
+  .trend-fall { color: #ef4444 !important; font-weight:600; }
+  .trend-stable { color: #6b7280 !important; }
+
+  /* Small diagram arrows */
+  .arrow { width: 40px; height: 24px; display:inline-block; vertical-align:middle; margin:0 8px; }
+  .diagram-item { min-width: 160px; }
+
+  /* Responsive fixes */
+  @media (max-width:720px){
+    .diagram-row { flex-direction: column; gap: 8px; align-items: stretch; }
+    .arrow { transform: rotate(90deg); margin: 6px 0; }
+  }
+
+  /* Info panel hidden by default */
+  #aiPanel, #forecastInfo { display:none; }
+
+  /* Forecast Tech block styling */
+  #forecastTech p {
+    margin: 2px 0;
+    line-height: 1.3;
+  }
+
+  /* Warning block styling - soft red with fade-in */
+  #forecastWarning {
+    display:none;
+    background-color:#fef3f3; /* мягкий красный / бледный */
+    color:#b91c1c; /* насыщенность текста для выделения */
+    padding:10px 14px;
+    border-radius:6px;
+    font-weight:600;
+    margin-top:8px;
+    border:1px solid #fca5a5;
+    opacity:0;
+    transition: opacity 0.5s ease;
+  }
+  #forecastWarning.show {
+    display:block;
+    opacity:1;
+  }
+</style>
+</head>
+<body class="light-mode transition-colors">
+
+<div class="container py-4">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h1 class="h4 mb-0">USD/KZT Forecast - Прогнозирование курса тенге</h1>
+    <div class="d-flex align-items-center gap-2">
+      <small class="text-muted">Light</small>
+      <div class="form-check form-switch m-0">
+        <input class="form-check-input" type="checkbox" id="themeToggle" aria-label="Light / Dark">
+      </div>
+      <small class="text-muted">Dark</small>
+    </div>
+  </div>
+
+  <!-- Form -->
+  <form id="forecastForm" class="d-flex gap-2 align-items-center mb-3" style="max-width:480px;">
+    <input id="targetDate" type="date" class="form-control" required style="max-width:220px;">
+    <button type="submit" class="btn btn-primary">Сделать прогноз</button>
+  </form>
+
+  <!-- Info -->
+  <div id="forecastInfo" class="bg-gray-800 p-3 rounded w-full max-w-4xl mb-3">
+    <h2 class="text-lg font-bold mb-2">Использованные технологии</h2>
+    <div id="forecastTech" class="mb-1">
+      <p><strong>Python:</strong> основной язык для анализа данных и построения моделей.</p>
+      <p><strong>FastAPI:</strong> быстрый фреймворк для создания REST API, через который фронтенд получает прогноз.</p>
+      <p><strong>yfinance:</strong> библиотека для загрузки исторических данных валют и акций.</p>
+      <p><strong>Prophet:</strong> модель от Meta для прогнозирования временных рядов (трендов, сезонности).</p>
+      <p><strong>Plotly.js:</strong> библиотека для построения интерактивных графиков на фронтенде.</p>
+      <p><strong>Tailwind CSS:</strong> утилитарный CSS-фреймворк для современного UI с поддержкой dark/light режима.</p>
+      <p><strong>JavaScript:</strong> управляет логикой страницы, формами, таблицей и графиком.</p>
+      <p><strong>Автор:</strong> @Meruert Zhaxymurat</p>
+    </div>
+  </div>
+
+  <!-- Forecast warning -->
+  <div id="forecastWarning">Прогноз осуществлен с помощью ИИ. Значения могут отличаться от реального курса.</div>
+
+  <!-- Graph -->
+  <div id="forecastGraph" class="card p-3 mb-3 light" style="height:380px;"></div>
+
+  <!-- Table -->
+  <div class="card p-2 light">
+    <div class="table-responsive">
+      <table class="table mb-0">
+        <thead class="table-light">
+          <tr>
+            <th>Date</th>
+            <th>Predicted</th>
+            <th>Lower</th>
+            <th>Upper</th>
+            <th>Trend</th>
+          </tr>
+        </thead>
+        <tbody id="forecastTable"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Info panel -->
+  <div id="aiPanel" class="card light mb-3 p-3">
+    <div class="d-flex justify-content-between align-items-start gap-3 flex-wrap">
+      <div class="flex-grow-1">
+        <h5 class="mb-2">Информация о прогнозе</h5>
+        <p class="mb-1"><strong>Кратко:</strong> прогноз строится с помощью модели Prophet — это инструмент для прогнозирования временных рядов, который относится к области машинного обучения (ML), которая в свою очередь является частью более широкой области искусственного интеллекта (AI).</p>
+        <p class="mb-0 text-muted">Ниже — иерархия и краткие пояснения по каждому уровню.</p>
+      </div>
+      <div class="text-end small text-muted">Появится после выполнения прогноза</div>
+    </div>
+
+    <hr class="my-3">
+
+    <!-- Diagram row -->
+    <div class="d-flex align-items-center diagram-row flex-wrap">
+      <div class="card diagram-item p-2 me-2 light">
+        <div class="fs-6 fw-semibold">AI — Искусственный интеллект</div>
+        <div class="small text-muted">Общая область: методы, позволяющие системам выполнять задачи, требующие интеллекта.</div>
+      </div>
+      <div class="arrow text-center">→</div>
+      <div class="card diagram-item p-2 me-2 light">
+        <div class="fs-6 fw-semibold">ML — Машинное обучение</div>
+        <div class="small text-muted">Подобласть AI: алгоритмы обучаются на данных (регрессия, классификация, деревья, нейросети).</div>
+      </div>
+      <div class="arrow text-center">→</div>
+      <div class="card diagram-item p-2 me-2 light">
+        <div class="fs-6 fw-semibold">Time Series Forecasting</div>
+        <div class="small text-muted">Прогнозирование временных рядов: тренды, сезонность, календари, шум.</div>
+      </div>
+      <div class="arrow text-center">→</div>
+      <div class="card diagram-item p-2 light">
+        <div class="fs-6 fw-semibold">Prophet</div>
+        <div class="small text-muted">Библиотека от Meta: удобный инструмент для быстрых, интерпретируемых прогнозов временных рядов.</div>
+      </div>
+    </div>
+
+    <hr class="my-3">
+
+    <div>
+      <p class="mb-1"><strong>Почему так учтено в проекте:</strong></p>
+      <ul class="mb-0">
+        <li>Prophet быстро выявляет тренды и сезонность и удобен для объяснения результатов.</li>
+        <li>Для учёта внешних факторов (например, цены на нефть, ставки) можно добавить регрессоры — это повышает качество прогноза.</li>
+        <li>Prophet — не «глубокий ИИ», но это часть ML/AI-стека; результаты зависят от качества данных и регрессоров.</li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+
+<script>
+$(function(){
+
+  const $body = $('body');
+  const $themeToggle = $('#themeToggle');
+  const $aiPanel = $('#aiPanel');
+  const $forecastForm = $('#forecastForm');
+  const $forecastTable = $('#forecastTable');
+  const $forecastGraph = $('#forecastGraph');
+  const $forecastInfo = $('#forecastInfo');
+  const $forecastWarning = $('#forecastWarning');
+
+  const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+  let isDark = prefersDark;
+  applyTheme(isDark);
+
+  $themeToggle.on('change', function(){
+    isDark = this.checked;
+    applyTheme(isDark);
+  });
+
+  function applyTheme(dark){
+    if(dark){
+      $body.removeClass('light-mode').addClass('dark-mode');
+      $('.card').addClass('dark').removeClass('light');
+      $('thead').addClass('table-dark').removeClass('table-light');
+      $('.form-control').addClass('dark').removeClass('');
+    } else {
+      $body.removeClass('dark-mode').addClass('light-mode');
+      $('.card').addClass('light').removeClass('dark');
+      $('thead').addClass('table-light').removeClass('table-dark');
+      $('.form-control').removeClass('dark');
+    }
+    if(window._lastForecastForTheme){
+      renderGraph(window._lastForecastForTheme);
+    }
+  }
+
+  $forecastForm.on('submit', function(e){
+    e.preventDefault();
+    const date = $('#targetDate').val();
+    if(!date) return;
+    fetchForecast(date);
+  });
+
+  async function fetchForecast(targetDate){
+    try{
+      const res = await fetch(`/api-forecast/forecast_ai_dynamic?target_date=${encodeURIComponent(targetDate)}`);
+      if(!res.ok){
+        const txt = await res.text();
+        throw new Error(`Сервер ответил ${res.status}: ${txt}`);
+      }
+      const json = await res.json();
+      const forecast = json.forecast || [];
+      renderTable(forecast);
+      renderGraph(forecast);
+      // show info
+      $aiPanel.show();
+      $forecastInfo.show();
+      $forecastWarning.addClass('show');
+      window._lastForecastForTheme = forecast;
+    }catch(err){
+      console.error(err);
+      alert('Ошибка при получении прогноза. Открой консоль для деталей.');
+    }
+  }
+
+  function renderTable(forecast){
+    $forecastTable.empty();
+    forecast.forEach(item=>{
+      let trendTextClass='trend-stable';
+      if(item.trend==='rise') trendTextClass='trend-rise';
+      else if(item.trend==='fall') trendTextClass='trend-fall';
+      const $tr=$('<tr>');
+      $tr.append(`<td>${item.date}</td>`);
+      $tr.append(`<td>${Number(item.predicted).toFixed(2)}</td>`);
+      $tr.append(`<td>${Number(item.lower).toFixed(2)}</td>`);
+      $tr.append(`<td>${Number(item.upper).toFixed(2)}</td>`);
+      $tr.append(`<td class="${trendTextClass}">${item.trend || 'stable'}</td>`);
+      $forecastTable.append($tr);
+    });
+  }
+
+  function renderGraph(forecast){
+    if(!forecast||forecast.length===0){ $forecastGraph.empty(); return; }
+    const x=forecast.map(d=>d.date);
+    const y=forecast.map(d=>d.predicted);
+    const markerColors=forecast.map(d=>d.trend==='rise'?'green':(d.trend==='fall'?'red':'gray'));
+    const trace={x,y,mode:'lines+markers',marker:{color:markerColors,size:8},line:{color:'#3b82f6'},text:forecast.map(d=>`Date: ${d.date}<br>Predicted: ${d.predicted}`),hoverinfo:'text'};
+    const isDarkNow=$body.hasClass('dark-mode');
+    const layout={title:'USD/KZT Forecast',xaxis:{title:'Date'},yaxis:{title:'Predicted Rate'},hovermode:'closest',paper_bgcolor:isDarkNow?'#0b1220':'#ffffff',plot_bgcolor:isDarkNow?'#07111c':'#ffffff',font:{color:isDarkNow?'#e6eef6':'#111827'}};
+    Plotly.react($forecastGraph.get(0),[trace],layout,{responsive:true});
+  }
+
+});
+</script>
+</body>
+</html>
